@@ -600,7 +600,6 @@ function showAvatarToast(msg){
 function doJoin(){
   const v=document.getElementById("nameInput").value.trim();
   if(!v)return;
-  // Save avatar if one was chosen
   if(pendingAvatar){
     userAvatar=pendingAvatar;
     localStorage.setItem("lcc-avatar",pendingAvatar);
@@ -608,20 +607,22 @@ function doJoin(){
     userAvatar=null;
     localStorage.removeItem("lcc-avatar");
   }
+  user=v;
+  localStorage.setItem("lcc-user",v);
   const ob=document.getElementById("onboard");
   ob.classList.add("leaving");
-  setTimeout(()=>{
-    ob.style.display="none";
-    user=v;
-    localStorage.setItem("lcc-user",v);
-    enterChat();
-  },600);
+  setTimeout(()=>enterChat(),250);
+  setTimeout(()=>enterChat(),900);
 }
 
 function enterChat(){
+  if(!user)return;
+  const ob=document.getElementById("onboard");
+  if(ob)ob.style.display="none";
   const ca=document.getElementById("chatapp");
-  ca.classList.add("visible");
-  document.getElementById("hdrUname").textContent=user;
+  if(ca)ca.classList.add("visible");
+  const hu=document.getElementById("hdrUname");
+  if(hu)hu.textContent=user;
   userAvatar=localStorage.getItem("lcc-avatar")||null;
   updateHeaderAvatar();
   updateAdmin();
@@ -632,14 +633,17 @@ function enterChat(){
   registerPushNotifications();
   const inp=document.getElementById("msginput");
   const row=document.getElementById("inputRow");
-  inp.addEventListener("focus",()=>row.classList.add("focused"));
-  inp.addEventListener("blur",()=>row.classList.remove("focused"));
-  inp.addEventListener("input",()=>{
-    const sb=document.getElementById("sendBtn");
-    if(inp.value.trim()||selectedImageB64)sb.classList.add("active");
-    else sb.classList.remove("active");
-  });
-  setTimeout(()=>inp.focus(),300);
+  if(inp&&row&&!inp.dataset.bound){
+    inp.dataset.bound="1";
+    inp.addEventListener("focus",()=>row.classList.add("focused"));
+    inp.addEventListener("blur",()=>row.classList.remove("focused"));
+    inp.addEventListener("input",()=>{
+      const sb=document.getElementById("sendBtn");
+      if(inp.value.trim()||selectedImageB64)sb.classList.add("active");
+      else sb.classList.remove("active");
+    });
+  }
+  if(inp)setTimeout(()=>inp.focus(),300);
 }
 
 function doLogout(){
