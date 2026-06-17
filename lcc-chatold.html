@@ -337,6 +337,12 @@ button{font-family:inherit}
   <div class="top-actions">
     <button id="enableNotifBtn" onclick="registerPushNotifications(true)">🔔 Enable notifications</button>
     <button onclick="clearPrivateTarget()">🌐 Public messages</button>
+    <button id="topCallBtn" onclick="openCallPanel()">📞 Voice call</button>
+    <button onclick="openCallPanel();setTimeout(toggleVideo,150)">🎥 Video call</button>
+    <button id="privateBtn" onclick="setPrivateTarget()">🔒 Private: off</button>
+    <button onclick="clearPrivateTarget()">🌐 Public</button>
+    <button onclick="togglePiP()">🔔 Live widget</button>
+    <button onclick="openCallPanel();setTimeout(toggleSoundboard,150)">🎛️ Soundboard</button>
   </div>
 
   <div id="messages">
@@ -449,6 +455,7 @@ button{font-family:inherit}
 
 <script>
 const API="https://chat.catboxfat.workers.dev/";
+const API="https://chat.catboxfat.workers.dev";
 let user="", admin=false, msgs=[], reactToId=null, pollTimer=null, privateTarget="";
 let userAvatar=null;       // currently active emoji avatar (or null)
 let pendingAvatar=null;    // emoji chosen in onboarding before joining
@@ -623,6 +630,7 @@ function enterChat(){
   if(pollTimer)clearInterval(pollTimer);
   pollTimer=setInterval(loadMsgs,3000);
 
+  registerPushNotifications();
   const inp=document.getElementById("msginput");
   const row=document.getElementById("inputRow");
   if(inp&&row&&!inp.dataset.bound){
@@ -1211,7 +1219,7 @@ function showIncomingCall(){
 
 function startCall(){
   if(callActive)return;
-  navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+  navigator.mediaDevices.getUserMedia({audio:true,video:true}).catch(()=>navigator.mediaDevices.getUserMedia({audio:true})).then(stream=>{
     callActive=true;localStream=stream;hasIncomingCall=false;
     const lv=document.getElementById("localVideo");if(lv)lv.srcObject=stream;
     stream.getVideoTracks().forEach(t=>t.enabled=false);
@@ -1285,12 +1293,19 @@ async function registerPushNotifications(force){
     const reg=await navigator.serviceWorker.register('./lcc-chatold-sw.js');
     const perm=await Notification.requestPermission();
     if(perm!=='granted'){if(force)showAvatarToast('Notifications blocked');return;}
+async function registerPushNotifications(){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)||!user)return;
+  try{
+    const reg=await navigator.serviceWorker.register('./lcc-chatold-sw.js');
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted')return;
     const r=await fetch(API+'?action=vapidPublicKey');
     const {publicKey}=await r.json();
     const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8Array(publicKey)});
     await fetch(API+'?action=subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,subscription:sub})});
     if(force)showAvatarToast('Notifications enabled ✓');
   }catch(e){if(force)showAvatarToast('Notifications failed');}
+  }catch(e){}
 }
 function urlB64ToUint8Array(base64String){
   const padding='='.repeat((4-base64String.length%4)%4);
@@ -1313,6 +1328,10 @@ function toggleVideo(){
   if(videoEnabled&&localStream&&!localStream.getVideoTracks().length){
     navigator.mediaDevices.getUserMedia({video:true}).then(vs=>{const vt=vs.getVideoTracks()[0];if(vt){localStream.addTrack(vt);document.getElementById("localVideo").srcObject=localStream;}}).catch(()=>showAvatarToast("Camera permission denied"));
   }
+function updatePrivateButton(){const b=document.getElementById("privateBtn");if(b){b.textContent=privateTarget?"🔒 Private: "+privateTarget:"🔒 Private: off";b.classList.toggle("active",!!privateTarget)}}
+function toggleVideo(){
+  if(!callActive){startCall();setTimeout(toggleVideo,900);return}
+  videoEnabled=!videoEnabled;
   if(localStream)localStream.getVideoTracks().forEach(t=>t.enabled=videoEnabled);
   document.getElementById("callVideoStage").classList.toggle("active",videoEnabled);
   document.getElementById("videoBtn").classList.toggle("muted",!videoEnabled);
