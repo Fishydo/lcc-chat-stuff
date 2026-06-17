@@ -261,6 +261,20 @@ button{font-family:inherit}
 /* ─── Avatar change toast ─── */
 .avatar-toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%) translateY(10px);background:rgba(24,24,27,.97);border:1px solid rgba(63,63,70,.7);border-radius:12px;padding:9px 16px;font-size:13px;color:#a1a1aa;font-weight:500;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;z-index:400;backdrop-filter:blur(16px)}
 .avatar-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.top-actions{display:flex;gap:8px;padding:10px 16px;background:rgba(10,10,15,.92);border-bottom:1px solid rgba(255,255,255,.06);overflow-x:auto;flex-shrink:0}
+.top-actions button{white-space:nowrap;background:rgba(24,24,27,.9);border:1px solid #27272a;border-radius:12px;color:#d4d4d8;padding:9px 12px;font-size:13px;font-weight:700;cursor:pointer;transition:all .2s}
+.top-actions button:hover,.top-actions button.active{background:rgba(139,92,246,.18);border-color:rgba(139,92,246,.45);color:#c4b5fd;transform:translateY(-1px)}
+.private-chip{display:inline-flex;align-items:center;gap:5px;background:rgba(236,72,153,.12);border:1px solid rgba(236,72,153,.25);color:#f0abfc;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-left:6px}
+.call-video-stage{display:none;position:relative;width:min(70vw,520px);height:300px;margin:0 auto 20px;border-radius:20px;overflow:hidden;background:#09090b;border:1px solid #3f3f46}
+.call-video-stage.active{display:block}
+.call-video-stage video{width:100%;height:100%;object-fit:cover;background:#09090b}
+.call-video-stage #localVideo{position:absolute;right:12px;bottom:12px;width:130px;height:92px;border-radius:14px;border:2px solid rgba(255,255,255,.18);box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.soundboard-panel-old{display:none;margin-top:18px;padding:14px;border-radius:18px;background:rgba(9,9,11,.72);border:1px solid rgba(63,63,70,.65)}
+.soundboard-panel-old.active{display:block}
+.soundboard-grid-old{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.soundboard-grid-old button{border:1px solid #3f3f46;background:rgba(24,24,27,.95);color:#e4e4e7;border-radius:12px;padding:10px 6px;font-size:12px;font-weight:800;cursor:pointer}
+.soundboard-grid-old button:hover{background:rgba(139,92,246,.18);border-color:rgba(139,92,246,.4)}
 </style>
 </head>
 <body>
@@ -317,6 +331,15 @@ button{font-family:inherit}
       </div>
       <button class="logout-btn" onclick="doLogout()" title="Leave">⏻</button>
     </div>
+  </div>
+
+  <div class="top-actions">
+    <button id="topCallBtn" onclick="openCallPanel()">📞 Voice call</button>
+    <button onclick="openCallPanel();setTimeout(toggleVideo,150)">🎥 Video call</button>
+    <button id="privateBtn" onclick="setPrivateTarget()">🔒 Private: off</button>
+    <button onclick="clearPrivateTarget()">🌐 Public</button>
+    <button onclick="togglePiP()">🔔 Live widget</button>
+    <button onclick="openCallPanel();setTimeout(toggleSoundboard,150)">🎛️ Soundboard</button>
   </div>
 
   <div id="messages">
@@ -401,14 +424,18 @@ button{font-family:inherit}
       <div class="call-icon active">🎤</div>
       <div class="call-title">In Call</div>
       <div class="call-timer" id="callTimer">00:00</div>
+      <div class="call-video-stage" id="callVideoStage"><video id="remoteVideo" autoplay playsinline></video><video id="localVideo" autoplay playsinline muted></video></div>
       <div class="voice-bars" id="voiceBars">
         <div class="voice-bar"></div><div class="voice-bar"></div><div class="voice-bar"></div>
         <div class="voice-bar"></div><div class="voice-bar"></div>
       </div>
       <div class="call-buttons">
         <button class="call-action mute" id="muteBtn" onclick="toggleMute()" title="Mute">🎤</button>
+        <button class="call-action mute" id="videoBtn" onclick="toggleVideo()" title="Camera">🎥</button>
+        <button class="call-action mute" id="soundBtn" onclick="toggleSoundboard()" title="Soundboard">🎛️</button>
         <button class="call-action end" onclick="endCall()" title="End Call">📵</button>
       </div>
+      <div class="soundboard-panel-old" id="soundboardOld"><div style="font-size:12px;font-weight:800;color:#a78bfa;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">Soundboard</div><div class="soundboard-grid-old"><button onclick="playSoundboard('airhorn')">📣 Airhorn</button><button onclick="playSoundboard('rimshot')">🥁 Rimshot</button><button onclick="playSoundboard('ding')">🔔 Ding</button><button onclick="playSoundboard('boing')">🌀 Boing</button><button onclick="playSoundboard('laser')">🔫 Laser</button><button onclick="playSoundboard('victory')">🏆 Victory</button></div><input type="file" accept="audio/*" style="margin-top:12px;color:#a1a1aa" onchange="playUploadedSound(event)"></div>
     </div>
     <div id="callIncoming" style="display:none">
       <div class="incoming-label">Incoming Call</div>
@@ -425,7 +452,7 @@ button{font-family:inherit}
 
 <script>
 const API="https://chat.catboxfat.workers.dev";
-let user="", admin=false, msgs=[], reactToId=null, pollTimer=null;
+let user="", admin=false, msgs=[], reactToId=null, pollTimer=null, privateTarget="";
 let userAvatar=null;       // currently active emoji avatar (or null)
 let pendingAvatar=null;    // emoji chosen in onboarding before joining
 let emojiAvatarMode=false; // true when emoji picker is open for avatar selection
@@ -597,6 +624,7 @@ function enterChat(){
   loadMsgs();
   if(pollTimer)clearInterval(pollTimer);
   pollTimer=setInterval(loadMsgs,3000);
+  registerPushNotifications();
   const inp=document.getElementById("msginput");
   const row=document.getElementById("inputRow");
   inp.addEventListener("focus",()=>row.classList.add("focused"));
@@ -713,7 +741,7 @@ let isFirstLoad=true;
 
 async function loadMsgs(){
   try{
-    const r=await fetch(API);
+    const r=await fetch(API+"?user="+encodeURIComponent(user)+"&admin="+(admin?"true":"false"));
     msgs=await r.json();
     renderMsgs();
     if(pipEnabled)updatePiP();
@@ -752,7 +780,7 @@ function buildMsgHTML(m,isFirst,isContinued,showAddBtn){
   if(isContinued){
     return`${actionsHTML}<div style="flex:1;min-width:0">${m.deleted?`<span class="msg-deleted-badge" style="margin-top:2px">🗑 deleted</span><div class="msg-text-deleted">${esc(m.text||"")}</div>`:`${m.text?`<div class="msg-text">${esc(m.text)}</div>`:""}${imgHTML}`}${reactsHTML}</div>`;
   }
-  return`${actionsHTML}<div class="avatar-lg" style="${avatarStyle}">${avatarContent}</div><div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap"><span class="msg-user" style="color:${m.deleted?'#52525b':c}">${esc(m.user)}</span><span class="msg-time">${time}</span>${m.deleted?'<span class="msg-deleted-badge">🗑 deleted</span>':""}</div>${m.deleted?`<div class="msg-text-deleted">${esc(m.text||"")}</div>`:`${m.text?`<div class="msg-text">${esc(m.text)}</div>`:""}${imgHTML}`}${reactsHTML}</div>`;
+  return`${actionsHTML}<div class="avatar-lg" style="${avatarStyle}">${avatarContent}</div><div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap"><span class="msg-user" style="color:${m.deleted?'#52525b':c}">${esc(m.user)}</span><span class="msg-time">${time}</span>${m.privateTo?`<span class="private-chip">🔒 ${esc(m.privateTo)}</span>`:""}${m.deleted?'<span class="msg-deleted-badge">🗑 deleted</span>':""}</div>${m.deleted?`<div class="msg-text-deleted">${esc(m.text||"")}</div>`:`${m.text?`<div class="msg-text">${esc(m.text)}</div>`:""}${imgHTML}`}${reactsHTML}</div>`;
 }
 
 function renderMsgs(){
@@ -820,7 +848,8 @@ async function doSend(){
     text:t,
     avatar:userAvatar||null,
     imageData:selectedImageB64||null,
-    imageType:selectedImageType||null
+    imageType:selectedImageType||null,
+    privateTo:privateTarget||null
   };
 
   inp.value="";
@@ -866,7 +895,7 @@ async function pipSend(){
   const inp=document.getElementById("pipInput");
   const t=inp.value.trim();
   if(!t)return;
-  const payload={user,text:t,avatar:userAvatar||null,imageData:null,imageType:null};
+  const payload={user,text:t,avatar:userAvatar||null,imageData:null,imageType:null,privateTo:privateTarget||null};
   inp.value="";
   document.getElementById("pipSendBtn").classList.remove("active");
   await fetch(API+"?action=send",{method:"POST",body:JSON.stringify(payload)});
@@ -1117,7 +1146,7 @@ function updatePiP(){
 // ─── Voice Call ───
 const VOICE_WS="wss://chat-lcc.onrender.com";
 let voiceSocket=null,callActive=false,localStream=null;
-let audioContext=null,processor=null,source=null;
+let audioContext=null,processor=null,source=null,videoEnabled=false,soundOsc=null;
 let voiceHeartbeat=null,callTimerInterval=null,callSeconds=0;
 let isMuted=false,hasIncomingCall=false;
 
@@ -1188,8 +1217,10 @@ function showIncomingCall(){
 
 function startCall(){
   if(callActive)return;
-  navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+  navigator.mediaDevices.getUserMedia({audio:true,video:true}).catch(()=>navigator.mediaDevices.getUserMedia({audio:true})).then(stream=>{
     callActive=true;localStream=stream;hasIncomingCall=false;
+    const lv=document.getElementById("localVideo");if(lv)lv.srcObject=stream;
+    stream.getVideoTracks().forEach(t=>t.enabled=false);
     document.getElementById("callBadge").style.display="block";
     document.getElementById("callBtn").classList.add("active");
     showActiveCall();startCallTimer();
@@ -1215,7 +1246,7 @@ function endCall(){
   stopCallTimer();
   if(processor)processor.disconnect();
   if(source)source.disconnect();
-  if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;}
+  if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;} videoEnabled=false;document.getElementById("callVideoStage").classList.remove("active");
   isMuted=false;
   document.getElementById("muteBtn").classList.remove("muted");
   document.getElementById("muteBtn").innerHTML="🎤";
@@ -1252,6 +1283,49 @@ function updateTimerDisplay(){
   const s=(callSeconds%60).toString().padStart(2,"0");
   document.getElementById("callTimer").textContent=m+":"+s;
 }
+
+
+async function registerPushNotifications(){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)||!user)return;
+  try{
+    const reg=await navigator.serviceWorker.register('./lcc-chatold-sw.js');
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted')return;
+    const r=await fetch(API+'?action=vapidPublicKey');
+    const {publicKey}=await r.json();
+    const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8Array(publicKey)});
+    await fetch(API+'?action=subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,subscription:sub})});
+  }catch(e){}
+}
+function urlB64ToUint8Array(base64String){
+  const padding='='.repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base64);
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+
+function setPrivateTarget(){
+  const to=prompt("Private message to username:",privateTarget||"");
+  if(to===null)return;
+  privateTarget=to.trim();
+  updatePrivateButton();
+}
+function clearPrivateTarget(){privateTarget="";updatePrivateButton()}
+function updatePrivateButton(){const b=document.getElementById("privateBtn");if(b){b.textContent=privateTarget?"🔒 Private: "+privateTarget:"🔒 Private: off";b.classList.toggle("active",!!privateTarget)}}
+function toggleVideo(){
+  if(!callActive){startCall();setTimeout(toggleVideo,900);return}
+  videoEnabled=!videoEnabled;
+  if(localStream)localStream.getVideoTracks().forEach(t=>t.enabled=videoEnabled);
+  document.getElementById("callVideoStage").classList.toggle("active",videoEnabled);
+  document.getElementById("videoBtn").classList.toggle("muted",!videoEnabled);
+}
+function toggleSoundboard(){document.getElementById("soundboardOld").classList.toggle("active")}
+function playSoundboard(kind){
+  const ctx=audioContext||new(window.AudioContext||window.webkitAudioContext)();audioContext=ctx;
+  const freqs={airhorn:[440,360],rimshot:[900,160],ding:[880,1320],boing:[220,110],laser:[1200,220],victory:[523,659,784]};
+  (freqs[kind]||[440]).forEach((f,i)=>setTimeout(()=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type=kind==='laser'?'sawtooth':'sine';o.frequency.value=f;g.gain.setValueAtTime(.16,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.28);o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+.3)},i*140));
+}
+function playUploadedSound(e){const f=e.target.files&&e.target.files[0];if(!f)return;const a=new Audio(URL.createObjectURL(f));a.play()}
 
 function playAudioChunk(chunk){
   if(!audioContext)audioContext=new(window.AudioContext||window.webkitAudioContext)();
