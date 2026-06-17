@@ -322,7 +322,8 @@ button{font-family:inherit}
     </div>
     <div class="hdr-right">
       
-      <!-- Notification / PiP toggle -->
+      <button class="call-btn" id="callBtn" onclick="openCallPanel()" title="Call">📞<span class="call-badge" id="callBadge" style="display:none"></span></button>
+      <button class="notif-btn" id="privateBtn" onclick="setPrivateTarget()" title="Private message">🔒</button>
       <button class="notif-btn" id="notifBtn" onclick="togglePiP()" title="Live notifications (Picture-in-Picture)">🔔</button>
       <div class="hdr-user" onclick="changeAvatar()" title="Change profile emoji">
         <div class="avatar" id="hdrAvatar"></div>
@@ -334,6 +335,8 @@ button{font-family:inherit}
   </div>
 
   <div class="top-actions">
+    <button id="enableNotifBtn" onclick="registerPushNotifications(true)">🔔 Enable notifications</button>
+    <button onclick="clearPrivateTarget()">🌐 Public messages</button>
     <button id="topCallBtn" onclick="openCallPanel()">📞 Voice call</button>
     <button onclick="openCallPanel();setTimeout(toggleVideo,150)">🎥 Video call</button>
     <button id="privateBtn" onclick="setPrivateTarget()">🔒 Private: off</button>
@@ -451,6 +454,7 @@ button{font-family:inherit}
 </div>
 
 <script>
+const API="https://chat.catboxfat.workers.dev/";
 const API="https://chat.catboxfat.workers.dev";
 let user="", admin=false, msgs=[], reactToId=null, pollTimer=null, privateTarget="";
 let userAvatar=null;       // currently active emoji avatar (or null)
@@ -624,6 +628,7 @@ function enterChat(){
   loadMsgs();
   if(pollTimer)clearInterval(pollTimer);
   pollTimer=setInterval(loadMsgs,3000);
+
   registerPushNotifications();
   const inp=document.getElementById("msginput");
   const row=document.getElementById("inputRow");
@@ -743,6 +748,7 @@ async function loadMsgs(){
   try{
     const r=await fetch(API+"?user="+encodeURIComponent(user)+"&admin="+(admin?"true":"false"));
     msgs=await r.json();
+    handleCallSignals();
     renderMsgs();
     if(pipEnabled)updatePiP();
   }catch(e){}
@@ -812,6 +818,7 @@ function renderMsgs(){
   const currentMsgIds=new Set(msgs.map(m=>m.id));
   let lastUser=null;
   msgs.forEach(m=>{
+    if(typeof m.text==="string"&&m.text.startsWith("__lcc_call_signal__"))return;
     if(m.deleted&&!admin)return;
     const isNewMsg=!isFirstLoad&&!prevMsgIds.has(m.id);
     const sameAsPrev=(m.user===lastUser);
@@ -1144,40 +1151,31 @@ function updatePiP(){
 }
 
 // ─── Voice Call ───
-const VOICE_WS="wss://chat-lcc.onrender.com";
+const VOICE_WS=API.replace(/^http/,"ws");
 let voiceSocket=null,callActive=false,localStream=null;
 let audioContext=null,processor=null,source=null,videoEnabled=false,soundOsc=null;
 let voiceHeartbeat=null,callTimerInterval=null,callSeconds=0;
 let isMuted=false,hasIncomingCall=false;
 
 function connectVoice(){
-  if(voiceSocket&&voiceSocket.readyState===WebSocket.OPEN)return;
-  try{
-    voiceSocket=new WebSocket(VOICE_WS);
-    voiceSocket.onopen=()=>{
-      document.getElementById("callConnStatus").textContent="🟢 Connected — Ready to call";
-      document.getElementById("startCallBtn").disabled=false;
-      voiceHeartbeat=setInterval(()=>{
-        if(voiceSocket&&voiceSocket.readyState===WebSocket.OPEN)
-          voiceSocket.send(JSON.stringify({type:"heartbeat"}));
-      },30000);
-    };
-    voiceSocket.onmessage=(event)=>{
-      try{
-        const data=JSON.parse(event.data);
-        if(data.type==="call-start"&&!callActive)showIncomingCall();
-        if(data.type==="audio"&&callActive)playAudioChunk(data.chunk);
-      }catch(e){}
-    };
-    voiceSocket.onclose=()=>{
-      document.getElementById("callConnStatus").textContent="🔴 Disconnected — Reconnecting...";
-      document.getElementById("startCallBtn").disabled=true;
-      clearInterval(voiceHeartbeat);
-      setTimeout(connectVoice,3000);
-    };
-    voiceSocket.onerror=()=>{if(voiceSocket)voiceSocket.close()};
-  }catch(e){
-    document.getElementById("callConnStatus").textContent="⚠️ Connection failed";
+  document.getElementById("callConnStatus").textContent="🟢 Connected — Ready to call";
+  document.getElementById("startCallBtn").disabled=false;
+}
+
+async function sendCallSignal(type, extra={}){
+  const payload={user,text:"__lcc_call_signal__"+JSON.stringify({type,user,time:Date.now(),privateTo:privateTarget||null,...extra}),avatar:userAvatar||null,privateTo:privateTarget||null};
+  try{await fetch(API+"?action=send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})}catch(e){}
+}
+
+function handleCallSignals(){
+  const now=Date.now();
+  for(const m of msgs){
+    if(!m||m.user===user||typeof m.text!=="string"||!m.text.startsWith("__lcc_call_signal__"))continue;
+    try{
+      const sig=JSON.parse(m.text.slice("__lcc_call_signal__".length));
+      if(sig.type==="ring"&&!callActive&&!hasIncomingCall&&now-(sig.time||m.time||0)<30000)showIncomingCall();
+      if(sig.type==="end"&&callActive)endCall(false);
+    }catch(e){}
   }
 }
 
@@ -1224,8 +1222,7 @@ function startCall(){
     document.getElementById("callBadge").style.display="block";
     document.getElementById("callBtn").classList.add("active");
     showActiveCall();startCallTimer();
-    if(voiceSocket&&voiceSocket.readyState===WebSocket.OPEN)
-      voiceSocket.send(JSON.stringify({type:"call-start"}));
+    sendCallSignal("ring");
     audioContext=new(window.AudioContext||window.webkitAudioContext)();
     source=audioContext.createMediaStreamSource(stream);
     processor=audioContext.createScriptProcessor(1024,1,1);
@@ -1239,11 +1236,12 @@ function startCall(){
   }).catch(()=>alert("Microphone permission denied"));
 }
 
-function endCall(){
+function endCall(broadcast=true){
   callActive=false;hasIncomingCall=false;
   document.getElementById("callBadge").style.display="none";
   document.getElementById("callBtn").classList.remove("active");
   stopCallTimer();
+  if(broadcast)sendCallSignal("end");
   if(processor)processor.disconnect();
   if(source)source.disconnect();
   if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;} videoEnabled=false;document.getElementById("callVideoStage").classList.remove("active");
@@ -1285,6 +1283,12 @@ function updateTimerDisplay(){
 }
 
 
+async function registerPushNotifications(force){
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)||!user){if(force)showAvatarToast("Notifications need HTTPS and a joined username");return;}
+  try{
+    const reg=await navigator.serviceWorker.register('./lcc-chatold-sw.js');
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted'){if(force)showAvatarToast('Notifications blocked');return;}
 async function registerPushNotifications(){
   if(!('serviceWorker' in navigator)||!('PushManager' in window)||!user)return;
   try{
@@ -1295,6 +1299,8 @@ async function registerPushNotifications(){
     const {publicKey}=await r.json();
     const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8Array(publicKey)});
     await fetch(API+'?action=subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,subscription:sub})});
+    if(force)showAvatarToast('Notifications enabled ✓');
+  }catch(e){if(force)showAvatarToast('Notifications failed');}
   }catch(e){}
 }
 function urlB64ToUint8Array(base64String){
@@ -1311,6 +1317,13 @@ function setPrivateTarget(){
   updatePrivateButton();
 }
 function clearPrivateTarget(){privateTarget="";updatePrivateButton()}
+function updatePrivateButton(){const b=document.getElementById("privateBtn");if(b){b.textContent=privateTarget?"🔒 "+privateTarget:"🔒";b.classList.toggle("active",!!privateTarget)}}
+function toggleVideo(){
+  if(!callActive){startCall();setTimeout(toggleVideo,900);return}
+  videoEnabled=!videoEnabled;
+  if(videoEnabled&&localStream&&!localStream.getVideoTracks().length){
+    navigator.mediaDevices.getUserMedia({video:true}).then(vs=>{const vt=vs.getVideoTracks()[0];if(vt){localStream.addTrack(vt);document.getElementById("localVideo").srcObject=localStream;}}).catch(()=>showAvatarToast("Camera permission denied"));
+  }
 function updatePrivateButton(){const b=document.getElementById("privateBtn");if(b){b.textContent=privateTarget?"🔒 Private: "+privateTarget:"🔒 Private: off";b.classList.toggle("active",!!privateTarget)}}
 function toggleVideo(){
   if(!callActive){startCall();setTimeout(toggleVideo,900);return}
